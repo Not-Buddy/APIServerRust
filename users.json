@@ -1,0 +1,10 @@
+[
+  {
+    "username": "buddy",
+    "api_key": "some-secret-key-123"
+  },
+  {
+    "username": "not_buddy",
+    "api_key": "another-key-456"
+  }
+]
