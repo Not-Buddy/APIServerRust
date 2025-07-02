@@ -1,140 +1,82 @@
-use axum::{
-    async_trait,
-    extract::{State, FromRequestParts},
-    http::{Request, StatusCode, header::AUTHORIZATION, request::Parts},
-    middleware::{self, Next},
-    response::{IntoResponse, Json, Response},
-    routing::get,
-    Router,
-};
+mod authentication;
+mod jsony;
+mod server;
 
-use axum::body::Body;
-use serde::{Deserialize};
-use serde_json::from_reader;
-use std::{
-    collections::HashMap,
-    fs::File,
-    net::SocketAddr,
-    sync::Arc,
-};
-use tower_http::trace::TraceLayer;
-use tracing::{info, error};
+use server::start_server_interactive;
+use jsony::{add_user_to_json, remove_user_from_json, list_users_from_json};
+use std::io::{self, Write};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-#[derive(Debug, Deserialize, Clone)]
-struct User {
-    username: String,
-    api_key: String,
-}
-
-#[derive(Clone)]
-struct AppState {
-    users: Arc<HashMap<String, String>>, // api_key -> username
-}
 
 #[tokio::main]
 async fn main() {
-    // Initialize logging/tracing
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new("axum=debug"))
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    // Load users.json at startup
-    let users = load_users("users.json").expect("Failed to load users.json");
-    let users_map = users.into_iter()
-        .map(|u| (u.api_key, u.username))
-        .collect::<HashMap<_, _>>();
-
-    let state = AppState {
-        users: Arc::new(users_map),
-    };
-
-    // Build the application
-    let app = Router::new()
-        .route("/data", get(protected_data))
-        .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
-        .with_state(state.clone())
-        .layer(TraceLayer::new_for_http());
-
-    // Start the server
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-    info!("Listening on {}", addr);
-
-    axum_server::bind(addr)
-    .serve(app.into_make_service())
-    .await
-    .unwrap();
-
-}
-
-// Read users.json into Vec<User>
-fn load_users(path: &str) -> Result<Vec<User>, std::io::Error> {
-    let file = File::open(path)?;
-    let users: Vec<User> = from_reader(file)?;
-    Ok(users)
-}
-
-async fn auth_middleware(
-    State(state): State<AppState>,
-    mut req: Request<Body>,
-    next: Next,
-) -> Result<Response, StatusCode> {
-    // Extract Authorization header
-    let auth_header = req.headers()
-        .get(AUTHORIZATION)
-        .and_then(|v| v.to_str().ok());
-
-    let Some(auth_header) = auth_header else {
-        error!("Missing Authorization header");
-        return Err(StatusCode::UNAUTHORIZED);
-    };
-
-    // Expect header format: "Bearer <api_key>"
-    let api_key = auth_header.strip_prefix("Bearer ").map(str::trim);
-
-    let Some(api_key) = api_key else {
-        error!("Malformed Authorization header");
-        return Err(StatusCode::UNAUTHORIZED);
-    };
-
-    // Validate API key
-    if let Some(username) = state.users.get(api_key) {
-        info!("Authenticated user: {}", username);
-        // Optionally, insert user info into request extensions for handler access
-        req.extensions_mut().insert(username.clone());
-        Ok(next.run(req).await)
-    } else {
-        error!("Invalid API key");
-        Err(StatusCode::UNAUTHORIZED)
+    loop {
+        if let Err(e) = menu().await {
+            eprintln!("Error in menu: {e}");
+        }
     }
 }
 
-// Handler for GET /data
-async fn protected_data(
-    State(_state): State<AppState>,
-    username: AuthenticatedUser,
-) -> impl IntoResponse {
-    Json(serde_json::json!({
-        "message": format!("Hello, {}! Here is your protected data.", username.0),
-        "data": [1, 2, 3, 4]
-    }))
+async fn menu() -> io::Result<()> {
+    loop {
+        println!("\nUser Management Menu:");
+        println!("1. Add user");
+        println!("2. Remove user");
+        println!("3. List users");
+        println!("4. Start server");
+        println!("5. Exit");
+        print!("Enter your choice: ");
+        io::stdout().flush()?;
+
+        let mut choice = String::new();
+        io::stdin().read_line(&mut choice)?;
+        match choice.trim() {
+            "1" => {
+                let (username, api_key) = prompt_user_and_key()?;
+                add_user_to_json("users.json", &username, &api_key)?;
+                println!("User '{}' added.", username);
+            }
+            "2" => {
+                print!("Enter username to remove: ");
+                io::stdout().flush()?;
+                let mut username = String::new();
+                io::stdin().read_line(&mut username)?;
+                remove_user_from_json("users.json", username.trim())?;
+                println!("User '{}' removed (if existed).", username.trim());
+            }
+            "3" => {
+                list_users_from_json("users.json")?;
+            }
+            "4" => {
+                if let Err(e) = start_server_interactive().await {
+                    eprintln!("Server error: {e}");
+                }
+                break;
+            }
+            "5" => {
+                println!("Exiting.");
+                std::process::exit(0);
+            }
+            _ => println!("Invalid choice. Please try again."),
+        }
+    }
+    Ok(())
 }
 
-// Extractor to get authenticated username from request extensions
-struct AuthenticatedUser(String);
+fn prompt_user_and_key() -> io::Result<(String, String)> {
+    print!("Enter username: ");
+    io::stdout().flush()?;
+    let mut username = String::new();
+    io::stdin().read_line(&mut username)?;
 
-#[async_trait]
-impl<S> FromRequestParts<S> for AuthenticatedUser
-where
-    S: Send + Sync,
-{
-    type Rejection = StatusCode;
+    print!("Enter API key: ");
+    io::stdout().flush()?;
+    let mut api_key = String::new();
+    io::stdin().read_line(&mut api_key)?;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        parts.extensions.get::<String>()
-            .cloned()
-            .map(AuthenticatedUser)
-            .ok_or(StatusCode::UNAUTHORIZED)
-    }
+    Ok((username.trim().to_string(), api_key.trim().to_string()))
 }
