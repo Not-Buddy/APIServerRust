@@ -26,9 +26,8 @@ async fn menu() -> io::Result<()> {
         println!("\nUser Management Menu:");
         println!("1. Add user");
         println!("2. Remove user");
-        println!("3. List users");
-        println!("4. Start server");
-        println!("5. Exit");
+        println!("3. Start server");
+        println!("4. Exit");
         print!("Enter your choice: ");
         io::stdout().flush()?;
 
@@ -36,28 +35,33 @@ async fn menu() -> io::Result<()> {
         io::stdin().read_line(&mut choice)?;
         match choice.trim() {
             "1" => {
+                list_users_from_json("users.json")?;
+                println!("List before adding a user above ^");
                 let (username, api_key) = prompt_user_and_key()?;
                 add_user_to_json("users.json", &username, &api_key)?;
                 println!("User '{}' added.", username);
+                // Display current users after addition
+                list_users_from_json("users.json")?;
             }
             "2" => {
-                print!("Enter username to remove: ");
+                list_users_from_json("users.json")?;
+                println!("List before removal above ^");
+                println!("Enter username to remove: ");
                 io::stdout().flush()?;
                 let mut username = String::new();
                 io::stdin().read_line(&mut username)?;
                 remove_user_from_json("users.json", username.trim())?;
                 println!("User '{}' removed (if existed).", username.trim());
-            }
-            "3" => {
+                // Display current users after removal
                 list_users_from_json("users.json")?;
             }
-            "4" => {
+            "3" => {
                 if let Err(e) = start_server_interactive().await {
                     eprintln!("Server error: {e}");
                 }
                 break;
             }
-            "5" => {
+            "4" => {
                 println!("Exiting.");
                 std::process::exit(0);
             }

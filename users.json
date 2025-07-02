@@ -10,5 +10,9 @@
   {
     "username": "alice",
     "api_key": "some-secret-key-123"
+  },
+  {
+    "username": "Nobody",
+    "api_key": "alksdfjadsf222223"
   }
 ]
