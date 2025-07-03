@@ -20,7 +20,7 @@ use tokio::task;
 pub async fn start_server_interactive() -> Result<(), Box<dyn std::error::Error>> {
     let users = load_users("users.json")?;
     let users_map = users.into_iter()
-        .map(|u| (u.api_key, u.username))
+        .map(|u| (u.username, u.api_key))
         .collect::<HashMap<_, _>>();
     let state = AppState {
         users: Arc::new(users_map),
